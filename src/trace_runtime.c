@@ -8,6 +8,7 @@
 #include <sys/user.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <stdlib.h>
 
 #if !defined(__x86_64__)
 #error "Este runtime didatico suporta apenas Linux x86_64."
@@ -36,37 +37,48 @@ static void fill_event_from_regs(pid_t pid,
 
 static pid_t launch_tracee(char *const argv[])
 {
-    /*
-     * TODO Semana 2:
-     *
-     * Crie o processo monitorado.
-     *
-     * Fluxo esperado:
-     * - fork()
-     * - no filho:
-     *   - ptrace(PTRACE_TRACEME, ...)
-     *   - raise(SIGSTOP)
-     *   - execvp(argv[0], argv)
-     * - no pai:
-     *   - retornar o pid do filho
-     *
-     * Em erro, imprima uma mensagem com perror() e retorne -1.
-     */
-    fprintf(stderr, "erro: TODO Semana 2: implementar launch_tracee()\n");
-    return -1;
+    pid_t pid = fork(); 
+
+    if(pid<0){
+        perror("Erro no fork");  // Erro no fork, retorna o erro (-1)
+        return -1;
+    }
+    
+    if(pid==0){
+      // Se entrar no if, processo filho avisa o Kernel que será rastreado pelo processo PAI
+        if(ptrace(PTRACE_TRACEME, 0, NULL, NULL)< 0){
+            perror("Erro no ptrace");
+            exit(1);
+        }  
+
+        raise(SIGSTOP); //Processo filho para a si mesmo antes de executar o processo alvo
+        
+        if(execvp(argv[0],argv)<0){ //subsititui o processo filho pelo programa alvo
+            perror("Erro no execvp"); // houve erro no execvp
+            exit(1);
+        }
+    }
+
+    // retorna o pid do filho 
+    return pid;
 }
 
 static int wait_for_initial_stop(pid_t child)
 {
-    /*
-     * TODO Semana 2:
-     *
-     * O filho chama raise(SIGSTOP) antes de executar o programa alvo.
-     * O pai precisa esperar essa parada inicial com waitpid().
-     *
-     * Retorne 0 se o filho parou como esperado, -1 em erro.
-     */
-    fprintf(stderr, "erro: TODO Semana 2: implementar wait_for_initial_stop()\n");
+    int status;
+
+    //Pai espera o filho mudar de estado, ou seja, para com o SIGSTOP
+    if(waitpid(child, &status, 0)< 0){
+        perror("Erro no waitpid");
+        return -1;
+    }
+
+    // Aqui verifica se o filho parou como esperado pelo SIGSTOP
+    if(WIFSTOPPED(status)){
+        return 0; // DEu certto filho parou 
+    }
+
+    fprintf(stderr, "Erro, filho não parou como esperado\n"); // deu errado, o filho não parou (houve falha)
     return -1;
 }
 
