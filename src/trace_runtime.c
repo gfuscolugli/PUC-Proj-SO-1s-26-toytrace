@@ -19,7 +19,7 @@ static void fill_event_from_regs(pid_t pid,
                                  const struct user_regs_struct *regs,
                                  struct syscall_event *ev)
 {
- memset(ev, 0, sizeof(*ev));
+    memset(ev, 0, sizeof(*ev));
     ev->pid = pid;
     ev->entering = entering;
 
@@ -108,29 +108,32 @@ static int resume_until_next_syscall(pid_t child, int signal_to_deliver)
 
 static int wait_for_syscall_stop(pid_t child, int *status)
 {
-    // verifica se o filho mudou de estado (parou, terminou, etc.)
-    if(waitpid(child, status, 0)< 0){
-        perror("\nErro no waitpid");
-        return -1;
-    }
+    // NOVO LOOP: Fica preso aqui até achar uma Syscall verdadeira ou o programa terminar
+    while (1) {
+        if(waitpid(child, status, 0) < 0){
+            perror("\nErro no waitpid");
+            return -1;
+        }
 
-    // Faz a verificação se o filho terminou normalmente (WIFEXITED) ou seja, chamou o exit ao final ...
-    //... ou então se terminou por meio de um sinal (WIFSIGNALED), por exemplo o kill.
-    if(WIFEXITED(*status) || WIFSIGNALED(*status)){
-        return 0;
-    }
+        if(WIFEXITED(*status) || WIFSIGNALED(*status)){
+            return 0;
+        }
 
-    // aqui o filho parou e temos que descobri o por que
-    if(WIFSTOPPED(*status)){
-        //Usando o ptrace_o_tracesysgood as paradas de syscall vem com o bit 0x80 no sinal
-        if(WSTOPSIG(*status) & 0x80){
-            return 1; // de acordo com as regras de retorno, q foi uma parada de syscall.
+        if(WIFSTOPPED(*status)){
+            int sig = WSTOPSIG(*status);
             
-            // aqui caso pare por algum sinal comum (SIGTRAP),  não repassa o sinal para o filho pOis não foi uma syscall.
+            if(sig & 0x80){
+                return 1; // É uma parada de syscall legítima!
+            }
+
+            // Se chegou aqui, é um sinal falso (como o SIGTRAP gerado pelo execve)
+            // Repassamos o sinal (ou 0 se for o próprio SIGTRAP) e mandamos o filho rodar de novo
+            int inject_sig = (sig == SIGTRAP) ? 0 : sig;
+            if(ptrace(PTRACE_SYSCALL, child, NULL, inject_sig) < 0){
+                return -1;
+            }
         }
     }
-
-    return 0; // significa que filho terminou normalmente ou por parada que não sejaa syscall stop.
 }
 
 int trace_program(char *const argv[],
